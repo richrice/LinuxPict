@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=LinuxPict
+Comment=Capture and annotate screenshots for an AI agent
+Exec=@EXEC@
+Icon=applets-screenshooter
+Terminal=false
+Categories=Graphics;Utility;
+Keywords=screenshot;annotation;AI;capture;
+Actions=Capture;
+StartupNotify=true
+
+[Desktop Action Capture]
+Name=Capture Screenshot
+Exec=@EXEC@ --capture

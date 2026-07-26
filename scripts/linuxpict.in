@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec python3 -c 'import sys; sys.path.insert(0, "@APP_DIR@"); from linuxpict.app import main; raise SystemExit(main(sys.argv[1:]))' "$@"
