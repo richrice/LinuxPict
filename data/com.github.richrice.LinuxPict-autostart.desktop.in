@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LinuxPict
+Comment=Keep LinuxPict ready for the capture hotkey
+Exec=@EXEC@ --background
+Icon=applets-screenshooter
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

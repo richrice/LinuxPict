@@ -4,6 +4,7 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 bin_dir="$HOME/.local/bin"
 desktop_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+autostart_dir="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 legacy_python_dir="${XDG_DATA_HOME:-$HOME/.local/share}/linuxpict"
 
 if ! pkg-config --exists gtkmm-3.0; then
@@ -15,7 +16,11 @@ cmake -S "$repo_dir" -B "$repo_dir/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build "$repo_dir/build"
 ctest --test-dir "$repo_dir/build" --output-on-failure
 
-mkdir -p "$bin_dir" "$desktop_dir"
+if pgrep -x linuxpict >/dev/null 2>&1; then
+  pkill -TERM -x linuxpict
+fi
+
+mkdir -p "$bin_dir" "$desktop_dir" "$autostart_dir"
 install -m 755 "$repo_dir/build/linuxpict" "$bin_dir/linuxpict"
 if [[ -d "$legacy_python_dir/linuxpict" ]]; then
   rm -rf -- "$legacy_python_dir"
@@ -24,6 +29,10 @@ chmod 755 "$bin_dir/linuxpict"
 sed "s|@EXEC@|$bin_dir/linuxpict|g" "$repo_dir/data/com.github.richrice.LinuxPict.desktop.in" \
   > "$desktop_dir/com.github.richrice.LinuxPict.desktop"
 chmod 644 "$desktop_dir/com.github.richrice.LinuxPict.desktop"
+sed "s|@EXEC@|$bin_dir/linuxpict|g" \
+  "$repo_dir/data/com.github.richrice.LinuxPict-autostart.desktop.in" \
+  > "$autostart_dir/com.github.richrice.LinuxPict.desktop"
+chmod 644 "$autostart_dir/com.github.richrice.LinuxPict.desktop"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
@@ -46,5 +55,7 @@ if [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* || "${XDG_CURRENT_DESKTOP:-}" == *gn
   gsettings set "$schema" binding "<Control><Alt>c"
   echo "Registered Ctrl+Alt+C as the GNOME capture shortcut."
 fi
+
+setsid "$bin_dir/linuxpict" --background </dev/null >/dev/null 2>&1 &
 
 echo "Installed LinuxPict. Run: $bin_dir/linuxpict"

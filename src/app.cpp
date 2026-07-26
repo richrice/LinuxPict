@@ -562,4 +562,79 @@ void LauncherWindow::capture() {
     }
 }
 
+Glib::RefPtr<LinuxPictApplication> LinuxPictApplication::create() {
+    return Glib::RefPtr<LinuxPictApplication>(new LinuxPictApplication());
+}
+
+LinuxPictApplication::LinuxPictApplication()
+    : Gtk::Application(
+        "com.github.richrice.LinuxPict",
+        Gio::APPLICATION_HANDLES_COMMAND_LINE
+    ) {}
+
+int LinuxPictApplication::on_command_line(
+    const Glib::RefPtr<Gio::ApplicationCommandLine>& command_line
+) {
+    int argument_count = 0;
+    char** raw_arguments = command_line->get_arguments(argument_count);
+    std::vector<std::string> arguments;
+    for (int index = 1; index < argument_count; ++index) {
+        arguments.emplace_back(raw_arguments[index]);
+    }
+    g_strfreev(raw_arguments);
+
+    const auto has = [&arguments](const char* option) {
+        return std::find(arguments.begin(), arguments.end(), option) != arguments.end();
+    };
+    if (has("--help")) {
+        command_line->print(
+            "Usage: linuxpict [--capture|--background|--quit]\n"
+            "Capture and annotate screenshots for an AI agent.\n"
+        );
+        return 0;
+    }
+    if (has("--quit")) {
+        quit();
+        return 0;
+    }
+    if (has("--background")) {
+        if (!background_held_) {
+            hold();
+            background_held_ = true;
+        }
+        return 0;
+    }
+    if (has("--capture")) {
+        capture();
+        return 0;
+    }
+    if (!launcher_) {
+        launcher_ = std::make_unique<LauncherWindow>(
+            Glib::RefPtr<Gtk::Application>(this)
+        );
+    }
+    launcher_->present();
+    return 0;
+}
+
+void LinuxPictApplication::capture() {
+    try {
+        auto window = std::make_unique<AnnotationWindow>(
+            Glib::RefPtr<Gtk::Application>(this),
+            capture_with_portal()
+        );
+        annotation_windows_.push_back(std::move(window));
+    } catch (const CaptureCancelled&) {
+        // Cancellation is a normal result of the desktop security prompt.
+    } catch (const std::exception& error) {
+        if (!launcher_) {
+            launcher_ = std::make_unique<LauncherWindow>(
+                Glib::RefPtr<Gtk::Application>(this)
+            );
+        }
+        launcher_->show();
+        show_error(*launcher_, "Could not capture the screen", error.what());
+    }
+}
+
 }  // namespace linuxpict

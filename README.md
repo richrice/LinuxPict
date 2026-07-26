@@ -30,6 +30,10 @@ LinuxPict is a compiled C++20/gtkmm application. It has been built and run on Ub
 
 This installs into `~/.local`, adds LinuxPict to the application launcher, and on GNOME registers **Ctrl+Alt+C** as a system-wide capture shortcut. Log out and back in if your shell does not notice a newly created `~/.local/bin`.
 
+It also installs `~/.config/autostart/com.github.richrice.LinuxPict.desktop` and starts LinuxPict in the background immediately. Hotkey invocations are forwarded to that running single instance.
+
+To change the shortcut on GNOME, open **Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts → LinuxPict Capture**. The configured command should remain `~/.local/bin/linuxpict --capture`.
+
 Run without installing:
 
 ```sh

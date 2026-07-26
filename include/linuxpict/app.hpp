@@ -92,4 +92,22 @@ private:
     std::unique_ptr<AnnotationWindow> annotation_window_;
 };
 
+class LinuxPictApplication final : public Gtk::Application {
+public:
+    static Glib::RefPtr<LinuxPictApplication> create();
+
+protected:
+    LinuxPictApplication();
+    int on_command_line(
+        const Glib::RefPtr<Gio::ApplicationCommandLine>& command_line
+    ) override;
+
+private:
+    void capture();
+
+    bool background_held_{false};
+    std::vector<std::unique_ptr<AnnotationWindow>> annotation_windows_;
+    std::unique_ptr<LauncherWindow> launcher_;
+};
+
 }  // namespace linuxpict
