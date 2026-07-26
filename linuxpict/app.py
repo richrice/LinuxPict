@@ -156,7 +156,12 @@ class AnnotationWindow(Gtk.ApplicationWindow):
             (Tool.ARROW, "Arrow"), (Tool.BOX, "Box"), (Tool.ELLIPSE, "Ellipse"),
             (Tool.LINE, "Line"), (Tool.TEXT, "Text"), (Tool.CROP, "Crop"),
         ], start=1):
-            button = Gtk.RadioToolButton.new(next(iter(self.tool_buttons.values()), None))
+            first_button = next(iter(self.tool_buttons.values()), None)
+            button = (
+                Gtk.RadioToolButton.new_from_widget(first_button)
+                if first_button
+                else Gtk.RadioToolButton.new(None)
+            )
             button.set_label(f"{index} {label}")
             button.set_is_important(True)
             button.connect("toggled", self.on_tool, tool)
@@ -278,7 +283,7 @@ class AnnotationWindow(Gtk.ApplicationWindow):
         try:
             Path(self.image_path).unlink(missing_ok=True)
         finally:
-            super().do_destroy()
+            Gtk.ApplicationWindow.do_destroy(self)
 
 
 class LinuxPictApplication(Gtk.Application):

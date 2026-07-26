@@ -55,7 +55,7 @@ The first tool is Crop. After a crop, LinuxPict returns to the previous annotati
 
 ## Wayland capture
 
-Wayland intentionally prevents applications from silently reading the display. LinuxPict uses the standard screenshot portal, so GNOME shows its trusted capture UI and asks what to share. This is the Linux security-model equivalent of MacPict’s macOS Screen Recording permission. On X11, the same portal-backed flow is used for consistent behavior.
+Wayland intentionally prevents applications from silently reading the display. LinuxPict uses the standard screenshot portal to obtain the image, then immediately opens its own crop and annotation window. GNOME may show a one-time access confirmation; it does not provide LinuxPict's editing interface. This is the Linux security-model equivalent of MacPict’s macOS Screen Recording permission. On X11, the same portal-backed flow is used for consistent behavior.
 
 ## Project layout
 
