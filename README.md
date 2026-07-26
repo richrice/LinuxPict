@@ -4,15 +4,23 @@ LinuxPict is the Linux port of [MacPict](https://github.com/richrice/MacPict): a
 
 Press **Ctrl+Alt+C**. LinuxPict asks the desktop for a screenshot, opens it at native resolution, and lets you crop or mark it up with arrows, boxes, ellipses, lines, and text. Copy the finished image, copy a temporary PNG path, or save it permanently.
 
+The annotation toolbar follows MacPict: icon-based modes, eight fixed export-safe colors, small/medium/large stroke and text sizes, undo/redo/clear, a live output-size readout, reset crop, Save As, copy-path, Copy, and close.
+
 ![Linux](https://img.shields.io/badge/Linux-GNOME%20%7C%20X11%20%7C%20Wayland-blue)
 
 ## Requirements
 
-- Python 3.10 or newer
-- GTK 3, PyGObject, GdkPixbuf, and pycairo
+- A C++20 compiler and CMake 3.20 or newer
+- gtkmm 3, Cairo, GLib/GIO, and Ninja
 - xdg-desktop-portal with a screenshot backend
 
-Ubuntu 24.04 and current GNOME installations include these runtime components. LinuxPict has been built and run on Ubuntu 24.04 with GNOME 46 under Wayland.
+On Ubuntu:
+
+```sh
+sudo apt install build-essential cmake ninja-build libgtkmm-3.0-dev
+```
+
+LinuxPict is a compiled C++20/gtkmm application. It has been built and run on Ubuntu 24.04 with GNOME 46 under Wayland.
 
 ## Install
 
@@ -59,7 +67,7 @@ Wayland intentionally prevents applications from silently reading the display. L
 
 ## Project layout
 
-- `linuxpict/` — GTK application, portal capture, document model, and Cairo renderer
-- `tests/` — model, geometry, and native-resolution export tests
+- `src/` and `include/` — C++ gtkmm application, portal capture, document model, and Cairo renderer
+- `tests/` — compiled model and geometry tests
 - `scripts/` — build, test, run, and per-user install commands
 - `data/` — desktop launcher template

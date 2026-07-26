@@ -2,15 +2,24 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
-app_dir="${XDG_DATA_HOME:-$HOME/.local/share}/linuxpict"
 bin_dir="$HOME/.local/bin"
 desktop_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+legacy_python_dir="${XDG_DATA_HOME:-$HOME/.local/share}/linuxpict"
 
-mkdir -p "$app_dir" "$bin_dir" "$desktop_dir"
-rm -rf "$app_dir/linuxpict"
-cp -R "$repo_dir/linuxpict" "$app_dir/linuxpict"
+if ! pkg-config --exists gtkmm-3.0; then
+  echo "Missing gtkmm-3.0. On Ubuntu: sudo apt install libgtkmm-3.0-dev" >&2
+  exit 1
+fi
 
-sed "s|@APP_DIR@|$app_dir|g" "$repo_dir/scripts/linuxpict.in" > "$bin_dir/linuxpict"
+cmake -S "$repo_dir" -B "$repo_dir/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build "$repo_dir/build"
+ctest --test-dir "$repo_dir/build" --output-on-failure
+
+mkdir -p "$bin_dir" "$desktop_dir"
+install -m 755 "$repo_dir/build/linuxpict" "$bin_dir/linuxpict"
+if [[ -d "$legacy_python_dir/linuxpict" ]]; then
+  rm -rf -- "$legacy_python_dir"
+fi
 chmod 755 "$bin_dir/linuxpict"
 sed "s|@EXEC@|$bin_dir/linuxpict|g" "$repo_dir/data/com.github.richrice.LinuxPict.desktop.in" \
   > "$desktop_dir/com.github.richrice.LinuxPict.desktop"

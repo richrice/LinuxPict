@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-exec python3 -m linuxpict "$@"
+if [[ ! -x build/linuxpict ]]; then
+  ./scripts/build.sh
+fi
+exec ./build/linuxpict "$@"
