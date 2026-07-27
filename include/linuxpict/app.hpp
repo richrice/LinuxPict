@@ -104,8 +104,12 @@ protected:
 
 private:
     void capture();
+    void forget_window(AnnotationWindow* window);
+    // Wraps `this` in a RefPtr that owns a reference. Glib::RefPtr's raw-pointer
+    // constructor adopts without referencing, so RefPtr(this) would unreference
+    // the application once per call.
+    [[nodiscard]] Glib::RefPtr<Gtk::Application> self();
 
-    bool background_held_{false};
     std::vector<std::unique_ptr<AnnotationWindow>> annotation_windows_;
     std::unique_ptr<LauncherWindow> launcher_;
 };

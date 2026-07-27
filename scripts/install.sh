@@ -20,7 +20,10 @@ if pgrep -x linuxpict >/dev/null 2>&1; then
   pkill -TERM -x linuxpict
 fi
 
-mkdir -p "$bin_dir" "$desktop_dir" "$autostart_dir"
+mkdir -p "$bin_dir" "$desktop_dir"
+# Older installs ran a --background daemon from autostart; captures forwarded to
+# it opened behind the focused window. Each capture is its own process now.
+rm -f "$autostart_dir/com.github.richrice.LinuxPict.desktop"
 install -m 755 "$repo_dir/build/linuxpict" "$bin_dir/linuxpict"
 if [[ -d "$legacy_python_dir/linuxpict" ]]; then
   rm -rf -- "$legacy_python_dir"
@@ -29,10 +32,13 @@ chmod 755 "$bin_dir/linuxpict"
 sed "s|@EXEC@|$bin_dir/linuxpict|g" "$repo_dir/data/com.github.richrice.LinuxPict.desktop.in" \
   > "$desktop_dir/com.github.richrice.LinuxPict.desktop"
 chmod 644 "$desktop_dir/com.github.richrice.LinuxPict.desktop"
-sed "s|@EXEC@|$bin_dir/linuxpict|g" \
-  "$repo_dir/data/com.github.richrice.LinuxPict-autostart.desktop.in" \
-  > "$autostart_dir/com.github.richrice.LinuxPict.desktop"
-chmod 644 "$autostart_dir/com.github.richrice.LinuxPict.desktop"
+icon_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/actions"
+mkdir -p "$icon_dir"
+install -m 644 "$repo_dir/data/icons/linuxpict-arrow-symbolic.svg" "$icon_dir/"
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -f -t \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor" >/dev/null 2>&1 || true
+fi
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
@@ -52,10 +58,36 @@ if [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* || "${XDG_CURRENT_DESKTOP:-}" == *gn
   schema="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$binding_path"
   gsettings set "$schema" name "LinuxPict Capture"
   gsettings set "$schema" command "$bin_dir/linuxpict --capture"
-  gsettings set "$schema" binding "<Control><Alt>c"
-  echo "Registered Ctrl+Alt+C as the GNOME capture shortcut."
-fi
+  # Only claim a key when none is set, so reinstalling keeps a shortcut the
+  # user rebound by hand.
+  if [[ "$(gsettings get "$schema" binding)" == "''" ]]; then
+    gsettings set "$schema" binding "<Control><Alt>c"
+    echo "Registered Ctrl+Alt+C as the GNOME capture shortcut."
+  else
+    echo "Kept the existing GNOME capture shortcut: $(gsettings get "$schema" binding)"
+  fi
 
-setsid "$bin_dir/linuxpict" --background </dev/null >/dev/null 2>&1 &
+  # gsd-media-keys runs the hotkey command inside an app-gnome-linuxpict-*.scope,
+  # so the screenshot portal sees the app id "linuxpict". Without a stored grant
+  # it tries to prompt, and GNOME refuses to show an access dialog for an app
+  # that is not focused -- the capture is denied and nothing appears. Record the
+  # grant up front. Revoke with:
+  #   gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
+  #     --object-path /org/freedesktop/impl/portal/PermissionStore \
+  #     --method org.freedesktop.impl.portal.PermissionStore.DeletePermission \
+  #     screenshot screenshot linuxpict
+  if command -v gdbus >/dev/null 2>&1; then
+    if gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
+      --object-path /org/freedesktop/impl/portal/PermissionStore \
+      --method org.freedesktop.impl.portal.PermissionStore.SetPermission \
+      screenshot true screenshot "$(basename "$bin_dir/linuxpict")" '["yes"]' \
+      >/dev/null 2>&1; then
+      echo "Granted the screenshot portal permission for hotkey captures."
+    else
+      echo "Could not preset the screenshot portal permission; the first hotkey" >&2
+      echo "capture may be denied. Run LinuxPict once from the launcher." >&2
+    fi
+  fi
+fi
 
 echo "Installed LinuxPict. Run: $bin_dir/linuxpict"

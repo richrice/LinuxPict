@@ -30,7 +30,10 @@ const char* tool_label(Tool tool) {
 
 const char* tool_icon(Tool tool) {
     switch (tool) {
-        case Tool::Arrow: return "arrow";
+        // Adwaita and Yaru ship no plain arrow glyph, so LinuxPict installs its
+        // own. The old "arrow" name resolved to nothing and drew the broken-image
+        // icon.
+        case Tool::Arrow: return "linuxpict-arrow-symbolic";
         case Tool::Box: return "draw-rectangle";
         case Tool::Ellipse: return "draw-ellipse";
         case Tool::Line: return "draw-connector";
@@ -38,6 +41,14 @@ const char* tool_icon(Tool tool) {
         case Tool::Crop: return "crop-symbolic";
     }
     return "";
+}
+
+// The arrow icon only exists once install.sh has copied it into the icon theme.
+// Running straight from a build tree falls back to a stock glyph.
+Glib::ustring resolve_tool_icon(Tool tool) {
+    const Glib::ustring name(tool_icon(tool));
+    if (Gtk::IconTheme::get_default()->has_icon(name)) return name;
+    return tool == Tool::Arrow ? Glib::ustring("mail-forward-symbolic") : name;
 }
 
 Glib::RefPtr<Gdk::Pixbuf> color_icon(double red, double green, double blue, int diameter = 14) {
@@ -241,7 +252,7 @@ AnnotationWindow::AnnotationWindow(
     Gtk::RadioToolButton::Group group;
     for (const auto tool : {Tool::Arrow, Tool::Box, Tool::Ellipse, Tool::Line, Tool::Text, Tool::Crop}) {
         auto* button = Gtk::manage(new Gtk::RadioToolButton(group));
-        button->set_icon_name(tool_icon(tool));
+        button->set_icon_name(resolve_tool_icon(tool));
         button->set_label(tool_label(tool));
         const auto help = std::string(tool_label(tool)) + " (" +
             std::string(1, static_cast<char>('1' + static_cast<int>(tool))) + ")";
@@ -569,8 +580,16 @@ Glib::RefPtr<LinuxPictApplication> LinuxPictApplication::create() {
 LinuxPictApplication::LinuxPictApplication()
     : Gtk::Application(
         "com.github.richrice.LinuxPict",
-        Gio::APPLICATION_HANDLES_COMMAND_LINE
+        // NON_UNIQUE keeps every capture in the process the desktop just
+        // launched. Forwarding to a long-lived instance leaves the annotation
+        // window mapped but unraised, so it opens behind whatever has focus.
+        Gio::APPLICATION_HANDLES_COMMAND_LINE | Gio::APPLICATION_NON_UNIQUE
     ) {}
+
+Glib::RefPtr<Gtk::Application> LinuxPictApplication::self() {
+    reference();
+    return Glib::RefPtr<Gtk::Application>(this);
+}
 
 int LinuxPictApplication::on_command_line(
     const Glib::RefPtr<Gio::ApplicationCommandLine>& command_line
@@ -588,20 +607,9 @@ int LinuxPictApplication::on_command_line(
     };
     if (has("--help")) {
         command_line->print(
-            "Usage: linuxpict [--capture|--background|--quit]\n"
+            "Usage: linuxpict [--capture]\n"
             "Capture and annotate screenshots for an AI agent.\n"
         );
-        return 0;
-    }
-    if (has("--quit")) {
-        quit();
-        return 0;
-    }
-    if (has("--background")) {
-        if (!background_held_) {
-            hold();
-            background_held_ = true;
-        }
         return 0;
     }
     if (has("--capture")) {
@@ -609,28 +617,41 @@ int LinuxPictApplication::on_command_line(
         return 0;
     }
     if (!launcher_) {
-        launcher_ = std::make_unique<LauncherWindow>(
-            Glib::RefPtr<Gtk::Application>(this)
-        );
+        launcher_ = std::make_unique<LauncherWindow>(self());
     }
     launcher_->present();
     return 0;
 }
 
+void LinuxPictApplication::forget_window(AnnotationWindow* window) {
+    annotation_windows_.erase(
+        std::remove_if(
+            annotation_windows_.begin(),
+            annotation_windows_.end(),
+            [window](const std::unique_ptr<AnnotationWindow>& candidate) {
+                return candidate.get() == window;
+            }
+        ),
+        annotation_windows_.end()
+    );
+}
+
 void LinuxPictApplication::capture() {
     try {
-        auto window = std::make_unique<AnnotationWindow>(
-            Glib::RefPtr<Gtk::Application>(this),
-            capture_with_portal()
-        );
+        auto window = std::make_unique<AnnotationWindow>(self(), capture_with_portal());
+        auto* closed = window.get();
+        // Destroying the window is what removes its temporary PNG, so drop it
+        // from the list once it is hidden. Deferred to an idle callback so the
+        // object outlives the signal emission that triggered this.
+        closed->signal_hide().connect([this, closed] {
+            Glib::signal_idle().connect_once([this, closed] { forget_window(closed); });
+        });
         annotation_windows_.push_back(std::move(window));
     } catch (const CaptureCancelled&) {
         // Cancellation is a normal result of the desktop security prompt.
     } catch (const std::exception& error) {
         if (!launcher_) {
-            launcher_ = std::make_unique<LauncherWindow>(
-                Glib::RefPtr<Gtk::Application>(this)
-            );
+            launcher_ = std::make_unique<LauncherWindow>(self());
         }
         launcher_->show();
         show_error(*launcher_, "Could not capture the screen", error.what());
