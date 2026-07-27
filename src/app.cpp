@@ -4,6 +4,7 @@
 #include "linuxpict/render.hpp"
 
 #include <gdk/gdkkeysyms.h>
+#include <libintl.h>
 
 #include <algorithm>
 #include <chrono>
@@ -68,6 +69,73 @@ std::string default_filename() {
     name << "LinuxPict-" << std::put_time(std::localtime(&time), "%Y%m%d-%H%M%S") << ".png";
     return name.str();
 }
+
+// Where GNOME already keeps its own screenshots, so annotated ones land beside
+// them instead of in a directory nobody thinks to look in.
+//
+// Both halves of that path are localized. The parent comes from XDG user-dirs,
+// which is ~/Bilder in German and ~/Изображения in Russian, and gnome-shell
+// translates the subfolder as well -- screenshot.js builds it from
+// _("Screenshots"). Borrowing its catalog keeps annotated screenshots in the
+// same folder as unannotated ones; where gnome-shell is not installed the
+// lookup simply yields the untranslated msgid.
+std::filesystem::path backup_directory() {
+    const char* pictures = g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
+    const std::filesystem::path base = pictures
+        ? std::filesystem::path(pictures)
+        : std::filesystem::path(Glib::get_home_dir()) / "Pictures";
+    bind_textdomain_codeset("gnome-shell", "UTF-8");
+    return base / g_dgettext("gnome-shell", "Screenshots");
+}
+
+// Two copies inside the same second would otherwise collide, since the name is
+// only precise to the second.
+std::filesystem::path unique_backup_path() {
+    const auto directory = backup_directory();
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) {
+        throw std::runtime_error(
+            "Could not create " + directory.string() + ": " + error.message()
+        );
+    }
+    const std::filesystem::path name(default_filename());
+    auto candidate = directory / name;
+    for (int index = 2; std::filesystem::exists(candidate); ++index) {
+        candidate = directory /
+            (name.stem().string() + "-" + std::to_string(index) + name.extension().string());
+    }
+    return candidate;
+}
+
+std::vector<Gtk::TargetEntry> targets_of(GtkTargetList* list) {
+    int count = 0;
+    GtkTargetEntry* entries = gtk_target_table_new_from_list(list, &count);
+    std::vector<Gtk::TargetEntry> targets;
+    targets.reserve(static_cast<std::size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        targets.emplace_back(entries[index].target, Gtk::TargetFlags(0), entries[index].info);
+    }
+    gtk_target_table_free(entries, count);
+    gtk_target_list_unref(list);
+    return targets;
+}
+
+std::vector<Gtk::TargetEntry> image_targets() {
+    auto* list = gtk_target_list_new(nullptr, 0);
+    gtk_target_list_add_image_targets(list, 0, TRUE);
+    return targets_of(list);
+}
+
+std::vector<Gtk::TargetEntry> text_targets() {
+    auto* list = gtk_target_list_new(nullptr, 0);
+    gtk_target_list_add_text_targets(list, 0);
+    return targets_of(list);
+}
+
+// A copy is only useful until the next one; the backup PNG is what makes a
+// missed paste recoverable, so the wait does not need to be generous.
+constexpr unsigned kLingerSeconds = 15 * 60;
 
 void show_error(Gtk::Window& parent, const std::string& title, const std::string& detail) {
     Gtk::MessageDialog dialog(parent, title, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_CLOSE, true);
@@ -239,6 +307,7 @@ AnnotationWindow::AnnotationWindow(
     const Glib::RefPtr<Gtk::Application>& application,
     std::filesystem::path image_path
 ) : Gtk::ApplicationWindow(application),
+    application_(application),
     image_path_(std::move(image_path)),
     document_(
         Gdk::Pixbuf::create_from_file(image_path_.string())->get_width(),
@@ -356,12 +425,12 @@ AnnotationWindow::AnnotationWindow(
     );
     add_action(
         "folder-symbolic",
-        "Copy PNG file path (Ctrl+Shift+Enter)",
+        "Copy the PNG path, saving it to your screenshots folder (Ctrl+Shift+Enter)",
         sigc::mem_fun(*this, &AnnotationWindow::copy_path)
     );
     add_action(
         "edit-copy-symbolic",
-        "Copy annotated image (Ctrl+Enter)",
+        "Copy the image, saving it to your screenshots folder (Ctrl+Enter)",
         sigc::mem_fun(*this, &AnnotationWindow::copy_image),
         "Copy"
     );
@@ -420,19 +489,76 @@ void AnnotationWindow::clear() {
     update_title();
 }
 
-std::filesystem::path AnnotationWindow::render_temporary() const {
-    const auto destination = temporary_png_path();
+std::filesystem::path AnnotationWindow::render_backup() const {
+    const auto destination = unique_backup_path();
     render_png(image_path_, destination, document_.state().annotations, document_.state().crop);
     return destination;
 }
 
+// A clipboard selection is served on demand by the process that owns it, and
+// GNOME on Wayland has no clipboard manager to take over when that process
+// exits. Serving the data ourselves -- rather than through set_image()/set_text()
+// -- is what buys the "cleared" callback that says when nobody needs it anymore.
+void AnnotationWindow::own_clipboard(
+    const std::vector<Gtk::TargetEntry>& targets,
+    const Gtk::Clipboard::SlotGet& get
+) {
+    const auto generation = ++clipboard_generation_;
+    auto clipboard = Gtk::Clipboard::get();
+    const bool owned = clipboard->set(targets, get, [this, generation] {
+        if (generation == clipboard_generation_) {
+            finish();
+        }
+    });
+    if (!owned) {
+        throw std::runtime_error("The desktop refused to hand over the clipboard");
+    }
+    // Ask an X11 clipboard manager to take its own copy where one exists; it is
+    // a no-op under Wayland, which is why the process has to linger regardless.
+    clipboard->set_can_store();
+    clipboard->store();
+    if (const auto display = get_display()) {
+        display->flush();
+    }
+}
+
+// Hiding the last window ends Gtk::Application::run() by itself, so serving the
+// clipboard from an invisible process needs an explicit hold.
+void AnnotationWindow::begin_lingering() {
+    if (!lingering_) {
+        lingering_ = true;
+        application_->hold();
+    }
+    linger_timeout_.disconnect();
+    linger_timeout_ = Glib::signal_timeout().connect_seconds([this] {
+        finish();
+        return false;
+    }, kLingerSeconds);
+    hide();
+}
+
+void AnnotationWindow::finish() {
+    if (done_) {
+        return;
+    }
+    done_ = true;
+    linger_timeout_.disconnect();
+    if (lingering_) {
+        lingering_ = false;
+        application_->release();
+    }
+    hide();
+    finished_.emit();
+}
+
 void AnnotationWindow::copy_image() {
     try {
-        const auto path = render_temporary();
-        auto clipboard = Gtk::Clipboard::get();
-        clipboard->set_image(Gdk::Pixbuf::create_from_file(path.string()));
-        clipboard->store();
-        close();
+        const auto backup = render_backup();
+        const auto pixbuf = Gdk::Pixbuf::create_from_file(backup.string());
+        own_clipboard(image_targets(), [pixbuf](Gtk::SelectionData& selection, guint) {
+            selection.set_pixbuf(pixbuf);
+        });
+        begin_lingering();
     } catch (const std::exception& error) {
         show_error(*this, "Could not copy image", error.what());
     }
@@ -440,11 +566,12 @@ void AnnotationWindow::copy_image() {
 
 void AnnotationWindow::copy_path() {
     try {
-        const auto path = render_temporary();
-        auto clipboard = Gtk::Clipboard::get();
-        clipboard->set_text(path.string());
-        clipboard->store();
-        close();
+        const auto backup = render_backup();
+        const auto text = backup.string();
+        own_clipboard(text_targets(), [text](Gtk::SelectionData& selection, guint) {
+            selection.set_text(text);
+        });
+        begin_lingering();
     } catch (const std::exception& error) {
         show_error(*this, "Could not copy path", error.what());
     }
@@ -468,7 +595,7 @@ void AnnotationWindow::save_as() {
                 document_.state().annotations,
                 document_.state().crop
             );
-            close();
+            finish();
         } catch (const std::exception& error) {
             show_error(*this, "Could not save image", error.what());
         }
@@ -476,7 +603,14 @@ void AnnotationWindow::save_as() {
 }
 
 void AnnotationWindow::close_window() {
-    close();
+    finish();
+}
+
+bool AnnotationWindow::on_delete_event(GdkEventAny*) {
+    // The owner destroys this window once it reports itself finished, so the
+    // default handler must not tear it down underneath them.
+    finish();
+    return true;
 }
 
 bool AnnotationWindow::on_key_press_event(GdkEventKey* event) {
@@ -525,7 +659,7 @@ bool AnnotationWindow::on_key_press_event(GdkEventKey* event) {
             }
             break;
         case GDK_KEY_Escape:
-            close();
+            finish();
             return true;
         case GDK_KEY_bracketleft:
             canvas_.set_stroke_width(canvas_.stroke_width() - 1);
@@ -564,7 +698,7 @@ void LauncherWindow::capture() {
     hide();
     try {
         annotation_window_ = std::make_unique<AnnotationWindow>(application_, capture_with_portal());
-        annotation_window_->signal_hide().connect([this] { close(); });
+        annotation_window_->signal_finished().connect([this] { close(); });
     } catch (const CaptureCancelled&) {
         show();
     } catch (const std::exception& error) {
@@ -641,9 +775,10 @@ void LinuxPictApplication::capture() {
         auto window = std::make_unique<AnnotationWindow>(self(), capture_with_portal());
         auto* closed = window.get();
         // Destroying the window is what removes its temporary PNG, so drop it
-        // from the list once it is hidden. Deferred to an idle callback so the
-        // object outlives the signal emission that triggered this.
-        closed->signal_hide().connect([this, closed] {
+        // from the list once it reports itself finished -- a copy hides it long
+        // before then. Deferred to an idle callback so the object outlives the
+        // signal emission that triggered this.
+        closed->signal_finished().connect([this, closed] {
             Glib::signal_idle().connect_once([this, closed] { forget_window(closed); });
         });
         annotation_windows_.push_back(std::move(window));

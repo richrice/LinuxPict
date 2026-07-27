@@ -2,7 +2,7 @@
 
 LinuxPict is the Linux port of [MacPict](https://github.com/richrice/MacPict): a small desktop utility that shortens the “screenshot → annotate → hand it to an AI agent” loop.
 
-Press **Ctrl+Alt+C**. LinuxPict asks the desktop for a screenshot, opens it at native resolution, and lets you crop or mark it up with arrows, boxes, ellipses, lines, and text. Copy the finished image, copy a temporary PNG path, or save it permanently.
+Press **Ctrl+Alt+C**. LinuxPict asks the desktop for a screenshot, opens it at native resolution, and lets you crop or mark it up with arrows, boxes, ellipses, lines, and text. Copy the finished image, copy its file path, or save it somewhere of your choosing. Copies are also written to your screenshots folder.
 
 The annotation toolbar follows MacPict: icon-based modes, eight fixed export-safe colors, small/medium/large stroke and text sizes, undo/redo/clear, a live output-size readout, reset crop, Save As, copy-path, Copy, and close.
 
@@ -58,12 +58,31 @@ Build checks and tests:
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo, including crops |
 | `Ctrl+Backspace` | clear annotations |
 | `[` / `]` | smaller / larger stroke and text |
-| `Ctrl+Enter` | copy annotated image and close |
-| `Ctrl+Shift+Enter` | copy a temporary PNG path and close |
+| `Ctrl+Enter` | copy annotated image, saving a PNG to the screenshots folder |
+| `Ctrl+Shift+Enter` | copy the path of that saved PNG |
 | `Ctrl+S` | save annotated PNG and close |
 | `Esc` | close |
 
 The first tool is Crop. After a crop, LinuxPict returns to the previous annotation tool. Exports retain the selected crop’s native pixel dimensions.
+
+## Clipboard lifetime
+
+A clipboard selection on Wayland is served on demand by the process that owns it, and GNOME ships no clipboard manager that takes over once that process exits. Copying and quitting therefore leaves the clipboard empty.
+
+So Copy and Copy path close the window but do **not** end the process: LinuxPict keeps running invisibly as the clipboard's owner, serving the image or path until you paste. It exits by itself as soon as another application copies something, and after 15 minutes regardless. Closing without copying exits immediately, as does Save As.
+
+The one visible consequence is a `linuxpict` process outliving its window. That is deliberate; it is the only way a copied image survives on GNOME Wayland. Installing a clipboard manager such as GPaste would let the process exit right away, since gnome-shell would then hold the content itself.
+
+## Where images are saved
+
+Every Copy and Copy path also writes the annotated PNG next to GNOME's own screenshots as `LinuxPict-<date>-<time>.png`. A copy is never the only surviving artifact, so a missed paste costs nothing. Copy path hands out that file's path, so it stays valid indefinitely. Save As writes only where you choose.
+
+Both halves of that location are localized the way GNOME localizes them, so the folder is `~/Pictures/Screenshots` in English but `~/Bilder/Bildschirmfotos` in German and `~/Изображения/Снимки экрана` in Russian:
+
+- the parent comes from XDG user-dirs (`g_get_user_special_dir`), falling back to `~/Pictures` when user-dirs is not configured
+- the subfolder is read from gnome-shell's own message catalog, which is where `_("Screenshots")` in its `screenshot.js` comes from; without gnome-shell installed it stays `Screenshots`
+
+The timestamp in the filename is always ASCII digits regardless of locale, because the C++ global locale is left at `"C"`.
 
 ## Wayland capture
 

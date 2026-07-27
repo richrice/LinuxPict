@@ -52,8 +52,14 @@ public:
     );
     ~AnnotationWindow() override;
 
+    // Emitted when the window is done for good: the user dismissed it, or the
+    // clipboard it was serving has been taken over. Hiding is not enough to mean
+    // this, because a copy leaves the window hidden but still alive.
+    sigc::signal<void>& signal_finished() { return finished_; }
+
 protected:
     bool on_key_press_event(GdkEventKey* event) override;
+    bool on_delete_event(GdkEventAny* event) override;
 
 private:
     void select_tool(Tool tool);
@@ -66,8 +72,22 @@ private:
     void copy_path();
     void save_as();
     void close_window();
-    [[nodiscard]] std::filesystem::path render_temporary() const;
+    // Serves `targets` from this process until another application copies
+    // something, which is the only way a Wayland selection can outlive a
+    // visible window.
+    void own_clipboard(
+        const std::vector<Gtk::TargetEntry>& targets,
+        const Gtk::Clipboard::SlotGet& get
+    );
+    void begin_lingering();
+    void finish();
+    // Writes the annotated PNG to ~/Pictures/Screenshots and returns its path.
+    [[nodiscard]] std::filesystem::path render_backup() const;
 
+    // Hiding a window unregisters it from its Gtk::Application, so the lingering
+    // clipboard owner cannot ask get_application() for the reference it has to
+    // release; it keeps its own.
+    Glib::RefPtr<Gtk::Application> application_;
     std::filesystem::path image_path_;
     Document document_;
     Gtk::Box layout_{Gtk::ORIENTATION_VERTICAL};
@@ -75,6 +95,13 @@ private:
     AnnotationCanvas canvas_;
     std::map<Tool, Gtk::RadioToolButton*> tool_buttons_;
     Gtk::Label output_label_;
+    sigc::signal<void> finished_;
+    sigc::connection linger_timeout_;
+    // Replacing our own clipboard content also reports the old content as
+    // cleared, so only the newest copy is allowed to end the wait.
+    unsigned clipboard_generation_{0};
+    bool lingering_{false};
+    bool done_{false};
 };
 
 class LauncherWindow final : public Gtk::ApplicationWindow {
